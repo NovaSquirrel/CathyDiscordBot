@@ -638,9 +638,15 @@ async def image_filter_on_message(message, filter):
 			elif edited_image:
 				edited_image_as_file = io.BytesIO()
 				edited_image.save(edited_image_as_file, format='PNG')
+				edited_image_as_file.seek(0,2) # Move to the end
+				filesize = edited_image_as_file.tell()
+				if filesize >= 8388608:
+					edited_image_as_file.close()
+					edited_image.close()
+					return {'text': 'Whoops, the resulting file from that was over 8MB'}
 				edited_image_as_file.seek(0)
 
-				f = discord.File(edited_image_as_file, filename=random.choice(filenames)+fileextension)
+				f = discord.File(edited_image_as_file, filename=random.choice(filenames)+'.png')
 				await message.channel.send(file=f)
 				edited_image_as_file.close()
 				edited_image.close()
