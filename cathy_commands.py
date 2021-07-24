@@ -7,6 +7,7 @@ from PIL import Image, ImageFilter, ImageOps
 from not_constantinople import generate_provinces, generate_settlements
 from deeppyer import deepfry
 from rotpixels import rotpixels
+from transparentgif import save_transparent_gif
 
 # For random emoji
 from itertools import accumulate
@@ -124,6 +125,11 @@ def date_from_string(text):
 
 	# give up and use the current date
 	return datetime(today.year, today.month, today.day)
+
+def padImage(image, x, y, padToW, padToH):
+	i = Image.new('RGBA', (padToW, padToH), (0, 0, 0, 0))
+	i.paste(image, (x, y))
+	return i
 
 command_handlers = {}	# dictionary of functions to call for each command
 command_aliases = {}	# dictionary of commands to change to other commands
@@ -617,7 +623,7 @@ async def image_filter_on_message(message, filter):
 	filenames = ["mario", "wario", "luigi", "waluigi", "hamtaro", "sans", "mariokart", "doritos", "fritos", "toast", "burgerking", "aldi", "lidl"]
 
 	if len(message.attachments) == 0:
-		return {'text': 'Upload an image with `ca.hamtaro_eat` as the text'}
+		return {'text': 'I don\'t see an attachment on that message. Upload an image with that command as the text'}
 	else:
 		bytes_in_attachment = await message.attachments[0].read()
 		if bytes_in_attachment != None:
@@ -640,7 +646,11 @@ async def image_filter_on_message(message, filter):
 				edited_image.save(edited_image_as_file, format='PNG')
 				edited_image_as_file.seek(0,2) # Move to the end
 				filesize = edited_image_as_file.tell()
-				if filesize >= 8388608:
+
+				filesize_limit = 8388608
+				if message.guild:
+					filesize_limit = message.guild.filesize_limit
+				if filesize >= filesize_limit:
 					edited_image_as_file.close()
 					edited_image.close()
 					return {'text': 'Whoops, the resulting file from that was over 8MB'}
@@ -795,8 +805,8 @@ async def fn_thumbnail(arg, p):
 	split = arg.split(' ')
 	if len(split) < 2:
 		return {'text': 'You need to provide a width and a height'}
-	width = min(1024, int(split[0]))
-	height = min(1024, int(split[1]))
+	width = min(2048, int(split[0]))
+	height = min(2048, int(split[1]))
 
 	async def function(image):
 		image.thumbnail((width, height))
@@ -808,19 +818,19 @@ async def fn_resize(arg, p):
 	split = arg.lower().split(' ')
 	if len(split) < 2:
 		return {'text': 'You need to provide a width and a height'}
-	width = min(1024, int(split[0]))
-	height = min(1024, int(split[1]))
+	width = min(2048, int(split[0]))
+	height = min(2048, int(split[1]))
 	resample = Image.BICUBIC
 	if len(split) >= 3:
 		if split[2] == 'nearest':
 			resample = Image.NEAREST
 		elif split[2] == 'box':
 			resample = Image.BOX
-		elif split[2] == 'linear':
+		elif split[2] == 'linear' or split[2] == 'bilinear':
 			resample = Image.BILINEAR
 		elif split[2] == 'hamming':
 			resample = Image.HAMMING
-		elif split[2] == 'bicubic':
+		elif split[2] == 'cubic' or split[2] == 'bicubic':
 			resample = Image.BICUBIC
 		elif split[2] == 'lanczos':
 			resample = Image.LANCZOS
@@ -839,20 +849,80 @@ async def fn_rotate(arg, p):
 	if len(split) >= 2:
 		if split[1] == 'nearest':
 			resample = Image.NEAREST
-		elif split[1] == 'box':
-			resample = Image.BOX
-		elif split[1] == 'linear':
+		elif split[1] == 'linear' or split[1] == 'bilinear':
 			resample = Image.BILINEAR
-		elif split[1] == 'hamming':
-			resample = Image.HAMMING
-		elif split[1] == 'bicubic':
+		elif split[1] == 'cubic' or split[1] == 'bicubic':
 			resample = Image.BICUBIC
-		elif split[1] == 'lanczos':
-			resample = Image.LANCZOS
 
 	async def function(image):
 		return image.rotate(angle, expand=True, resample=Image.NEAREST if image.mode == 'P' else resample)
 	return await image_filter_on_msg_or_reply(p['discord_message'], function, 'ca.rotate angle')
+
+hand = Image.open('hand.png')
+@bot_command
+async def fn_petgif(arg, p):
+	# Derived from https://benisland.neocities.org/petpet/main.js
+	OUT_SIZE = 112
+	g = {
+	  'squish': 1.25,
+	  'scale': 0.875,
+	  'delay': 60,
+	  'spriteX': 14,
+	  'spriteY': 20,
+	  'spriteWidth': 112,
+	  'spriteHeight': 112,
+	  'currentFrame': 0,
+	}
+	frameOffsets = [
+		{ 'x': 0, 'y': 0, 'w': 0, 'h': 0 },
+		{ 'x': -4, 'y': 12, 'w': 4, 'h': -12 },
+		{ 'x': -12, 'y': 18, 'w': 12, 'h': -18 },
+		{ 'x': -8, 'y': 12, 'w': 4, 'h': -12 },
+		{ 'x': -4, 'y': 0, 'w': 0, 'h': 0 },
+	]
+	async def function(sprite):
+		def renderFrame(frame):
+			im = Image.new('RGBA', (OUT_SIZE, OUT_SIZE), (0, 0, 0, 0))
+
+			offset = frameOffsets[frame]
+			dx = int(g['spriteX'] + offset['x'] * (g['squish'] * 0.4))
+			dy = int(g['spriteY'] + offset['y'] * (g['squish'] * 0.9))
+			dw = int((g['spriteWidth'] + offset['w'] * g['squish']) * g['scale'])
+			dh = int((g['spriteHeight'] + offset['h'] * g['squish']) * g['scale'])
+
+			im.paste(sprite.resize((dw, dh)), (dx, dy))
+
+			padded_hand = hand.crop((frame * OUT_SIZE, 0, frame * OUT_SIZE + OUT_SIZE, OUT_SIZE))
+			padded_hand = padImage(padded_hand, 0, max(0, int(dy * 0.75 - max(0, g['spriteY']) - 0.5)), OUT_SIZE, OUT_SIZE)
+
+			im.paste(padded_hand, None, padded_hand)
+			return im
+		frames = [renderFrame(x) for x in range(5)]
+
+		as_file = io.BytesIO()
+		save_transparent_gif(frames, 60, as_file)
+		as_file.seek(0)
+		return (as_file, '.gif')
+	return await image_filter_on_msg_or_reply(p['discord_message'], function, 'ca.petgif')
+
+@bot_command
+async def fn_spingif(arg, p):
+	duration = 60
+	if arg != '':
+		duration = int(arg)
+
+	async def function(sprite):
+		width = 256
+		height = 256
+		sprite.thumbnail((width, height))
+		sprite = padImage(sprite, int(width/2-sprite.width/2), int(height/2-sprite.height/2), width, height)
+		frames = [sprite.rotate(360/32*i) for i in range(32)]
+
+		as_file = io.BytesIO()
+		save_transparent_gif(frames, duration, as_file)
+		as_file.seek(0)
+		return (as_file, '.gif')
+	return await image_filter_on_msg_or_reply(p['discord_message'], function, 'ca.spingif')
 
 @bot_command
 async def fn_jpegify(arg, p):
@@ -1003,8 +1073,8 @@ async def fn_sheriff(arg, p):
 	if len(arg) == 0:
 		arg = random_emoji(8)[0]
 	return {"text": message % (arg, arg, arg,arg, arg, arg, arg, arg, arg, arg, arg, arg, arg)}
-command_aliases['sherriff'] = 'sherrif'
-command_aliases['sherrif'] = 'sherrif'
+command_aliases['sherriff'] = 'sheriff'
+command_aliases['sherrif'] = 'sheriff'
 
 @bot_command
 async def fn_blur(arg, p):
@@ -1083,6 +1153,20 @@ async def fn_filter(arg, p):
 	async def function(image):
 		return image.filter(which)
 	return await image_filter_on_msg_or_reply(p['discord_message'], function, 'ca.filter')
+
+@bot_command
+async def fn_cricecorn(arg, p):
+	subspecies = random.choice(["special", "spicecorn", "skycecorn", "cricecorn", "candycorn", "cricecorn", "skycecorn", "icecorn", "spicecorn", "cricecorn", "cricecorn", "candycorn", "spicecorn", "icecorn", "skycecorn", "cricecorn", "candycorn", "icecorn", "cricecorn", "special"])
+
+	if subspecies == 'special':
+		subspecies = random.choice(["angel cricecorn", "thundercloud cricecorn", "fairy cricecorn", "crystal cricecorn", "aquatic cricecorn", "devil cricecorn"])
+
+	furcolor = random.choice(["natural fur color", "fur color of burning love", "natural fur color", "natural (dark) fur color", "a moody fur color", "fur color of a clear sky", "natural (light) fur color", "fur color of a forest", "natural fur color", "fur color of sweet love", "natural (light) fur color", "fur color of new leaves", "fur color of a clear sky", "natural (dark) fur color", "fur color of a deep sea", "natural fur color", "natural (light) fur color", "fur color of angel wings", "natural (dark) fur color"])
+	furpattern = random.choice(["normal pattern", "banded pattern", "piebald pattern", "dappled pattern", "spotted pattern", "any pattern you like"])
+
+	mutation = random.choice(["hairless", "floppy ears", "extra horn", "long hair", "long tail", "traits of another animal", "magic user", "curved horn", "glowing eyes/horn", "traits of a plant"])
+
+	return {'text': 'A%s %s with %s, in %s. Optional mutation: %s' % ('n' if (subspecies[0] == 'a' or subspecies[0]=='i') else '', subspecies, furcolor, furpattern, mutation)}
 
 # -------------------------------------------------------------------
 
